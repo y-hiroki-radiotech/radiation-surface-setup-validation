@@ -91,3 +91,7 @@ class TestMarginMetrics:
     def test_ratio_zero_margin(self):
         """Zero margin → inf."""
         assert margin_consumption_ratio(1.0, 0.0) == math.inf
+
+    def test_ratio_zero_margin_zero_displacement(self):
+        """Zero margin and zero displacement at the boundary → 0."""
+        assert margin_consumption_ratio(0.0, 0.0) == 0.0

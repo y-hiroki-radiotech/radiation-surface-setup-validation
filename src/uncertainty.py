@@ -40,8 +40,11 @@ def margin_remaining(conservative_k: float, margin_k: float) -> float:
 def margin_consumption_ratio(conservative_k: float, margin_k: float) -> float:
     """Q_i,k = C_i,k / M_k. math-design section 17.2.
 
-    Returns inf when margin is zero.
+    Returns 0 when both conservative displacement and margin are zero, and inf
+    when the margin is zero but conservative displacement is non-zero.
     """
     if margin_k == 0.0:
+        if conservative_k == 0.0:
+            return 0.0
         return math.inf
     return conservative_k / margin_k

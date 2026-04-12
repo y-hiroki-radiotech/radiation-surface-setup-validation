@@ -10,8 +10,7 @@ import math
 import streamlit as st
 import pandas as pd
 
-from .models import (
-    AXIS_NAMES,
+from src.models import (
     AxisUncertainty,
     EvaluationPoint,
     MarginProtocol,
@@ -19,8 +18,15 @@ from .models import (
     SimulationResult,
     UncertaintyModel,
 )
-from .decision import find_worst_axis, find_worst_point, is_pass, judge_all
-from .allowance import find_all_conditional_allowances, find_all_standalone_allowances
+from src.decision import find_worst_axis, find_worst_point, is_pass, judge_all
+from src.allowance import (
+    ROTATION_SEARCH_MAX,
+    ROTATION_SEARCH_MIN,
+    TRANSLATION_SEARCH_MAX,
+    TRANSLATION_SEARCH_MIN,
+    find_all_conditional_allowances,
+    find_all_standalone_allowances,
+)
 
 # --- Page config ---
 st.set_page_config(page_title="Setup Margin Simulator", layout="wide")
@@ -156,12 +162,54 @@ elif ref_mode == "current_based":
     reference_state = current_state
 else:
     st.sidebar.markdown("**Custom Reference / カスタム基準値**")
-    ref_v = st.sidebar.number_input("Ref Vertical (mm)", value=0.0, step=0.1, key="ref_v")
-    ref_l = st.sidebar.number_input("Ref Long (mm)", value=0.0, step=0.1, key="ref_l")
-    ref_t = st.sidebar.number_input("Ref Lateral (mm)", value=0.0, step=0.1, key="ref_t")
-    ref_r = st.sidebar.number_input("Ref Rotation (°)", value=0.0, step=0.1, key="ref_r")
-    ref_p = st.sidebar.number_input("Ref Pitch (°)", value=0.0, step=0.1, key="ref_p")
-    ref_w = st.sidebar.number_input("Ref Roll (°)", value=0.0, step=0.1, key="ref_w")
+    ref_v = st.sidebar.number_input(
+        "Ref Vertical (mm)",
+        value=0.0,
+        min_value=TRANSLATION_SEARCH_MIN,
+        max_value=TRANSLATION_SEARCH_MAX,
+        step=0.1,
+        key="ref_v",
+    )
+    ref_l = st.sidebar.number_input(
+        "Ref Long (mm)",
+        value=0.0,
+        min_value=TRANSLATION_SEARCH_MIN,
+        max_value=TRANSLATION_SEARCH_MAX,
+        step=0.1,
+        key="ref_l",
+    )
+    ref_t = st.sidebar.number_input(
+        "Ref Lateral (mm)",
+        value=0.0,
+        min_value=TRANSLATION_SEARCH_MIN,
+        max_value=TRANSLATION_SEARCH_MAX,
+        step=0.1,
+        key="ref_t",
+    )
+    ref_r = st.sidebar.number_input(
+        "Ref Rotation (°)",
+        value=0.0,
+        min_value=ROTATION_SEARCH_MIN,
+        max_value=ROTATION_SEARCH_MAX,
+        step=0.1,
+        key="ref_r",
+    )
+    ref_p = st.sidebar.number_input(
+        "Ref Pitch (°)",
+        value=0.0,
+        min_value=ROTATION_SEARCH_MIN,
+        max_value=ROTATION_SEARCH_MAX,
+        step=0.1,
+        key="ref_p",
+    )
+    ref_w = st.sidebar.number_input(
+        "Ref Roll (°)",
+        value=0.0,
+        min_value=ROTATION_SEARCH_MIN,
+        max_value=ROTATION_SEARCH_MAX,
+        step=0.1,
+        key="ref_w",
+    )
     reference_state = SetupState(
         vertical=ref_v, longitudinal=ref_l, lateral=ref_t,
         rotation=ref_r, pitch=ref_p, roll=ref_w,

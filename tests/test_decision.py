@@ -80,6 +80,16 @@ class TestJudgment:
         assert results[0].axiswise_pass_fail[0] is False
         assert results[0].margin_consumption_ratio[0] == math.inf
 
+    def test_zero_margin_zero_displacement_stays_consistent(self):
+        """Zero margin with zero conservative displacement stays on the pass boundary."""
+        state = SetupState()
+        points = [EvaluationPoint("a", 0, 0, 0)]
+        margin = MarginProtocol(m_x=0.0, m_y=10.0, m_z=10.0)
+        results = judge_all(state, points, margin, _zero_unc(), 0.0)
+
+        assert results[0].axiswise_pass_fail[0] is True
+        assert results[0].margin_consumption_ratio[0] == 0.0
+
 
 class TestWorstPoint:
     """D-6 through D-8."""

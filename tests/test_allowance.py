@@ -91,6 +91,16 @@ class TestStandaloneAllowance:
         assert abs(result.allowable_max - 8.0) <= 0.01
         assert abs(result.allowable_min - (-8.0)) <= 0.01
 
+    def test_reference_outside_supported_search_range_raises(self):
+        """Out-of-range base values should fail explicitly instead of returning invalid bounds."""
+        points = [EvaluationPoint("p", 0, 0, 100)]
+        margin = MarginProtocol(m_x=200.0, m_y=200.0, m_z=200.0)
+
+        with pytest.raises(ValueError, match="outside the supported search range"):
+            find_allowable_range(
+                "vertical", SetupState(vertical=100.0), points, margin, _uniform_unc(0.0), 0.0
+            )
+
 
 class TestConditionalAllowance:
     """A-3, A-5."""

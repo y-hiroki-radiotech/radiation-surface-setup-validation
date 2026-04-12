@@ -52,6 +52,17 @@ def _get_search_params(axis: str) -> tuple[float, float, float, float]:
     )
 
 
+def _validate_search_origin(axis: str, current_value: float, search_min: float, search_max: float) -> None:
+    """Reject a base value that lies outside the supported search domain."""
+    if search_min <= current_value <= search_max:
+        return
+
+    raise ValueError(
+        f"{axis}={current_value} is outside the supported search range "
+        f"[{search_min}, {search_max}]"
+    )
+
+
 def _test_pass(
     axis: str,
     value: float,
@@ -164,6 +175,7 @@ def find_allowable_range(
     """
     search_min, search_max, coarse_step, tolerance = _get_search_params(axis)
     current_value = base_state.get_axis(axis)
+    _validate_search_origin(axis, current_value, search_min, search_max)
 
     # Edge case: no evaluation points
     if not points:
