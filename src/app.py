@@ -28,46 +28,141 @@ from src.allowance import (
     find_all_standalone_allowances,
 )
 
+AXIS_INDEX = {"x": 0, "y": 1, "z": 2}
+AXIS_LABELS = {"x": "Lateral (x)", "y": "Long (y)", "z": "Vertical (z)"}
+DEFAULT_UNCERTAINTY_TEMPLATE = {
+    "u_id": 1.0,
+    "u_sur": 2.0,
+    "u_reg": 1.0,
+    "u_intra": 1.0,
+    "u_mod": 0.5,
+}
+
+
+def _apply_default_uncertainty_template() -> None:
+    """Populate uncertainty widgets with the default demo template."""
+    for axis_key in ("x", "y", "z"):
+        for field_name, field_value in DEFAULT_UNCERTAINTY_TEMPLATE.items():
+            st.session_state[f"{field_name}_{axis_key}"] = field_value
+
+
+def _coerce_float(value: object) -> float:
+    """Return a numeric value from an editor cell, defaulting blanks to zero."""
+    if pd.isna(value):
+        return 0.0
+    if isinstance(value, str) and not value.strip():
+        return 0.0
+    return float(value)
+
+
+def _normalize_extra_points(editor_df: pd.DataFrame) -> list[dict[str, float | str]]:
+    """Convert editable rows into the extra-point session-state shape."""
+    normalized: list[dict[str, float | str]] = []
+    for row_idx, row in enumerate(editor_df.to_dict("records"), start=2):
+        name_value = row.get("name")
+        name = "" if pd.isna(name_value) else str(name_value).strip()
+        x = _coerce_float(row.get("x"))
+        y = _coerce_float(row.get("y"))
+        z = _coerce_float(row.get("z"))
+        has_content = bool(name) or any(value != 0.0 for value in (x, y, z))
+        if not has_content:
+            continue
+        normalized.append({
+            "name": name or f"point_{row_idx}",
+            "x": x,
+            "y": y,
+            "z": z,
+        })
+    return normalized
+
+
 # --- Page config ---
 st.set_page_config(page_title="Setup Margin Simulator", layout="wide")
 st.title("Setup Margin Allowance Simulator / セットアップマージン許容領域シミュレータ")
+st.caption("Adjust the current 6DoF state, then review the limiting point and remaining margin headroom.")
 
 
 # ============================================================
 # Section 1: Condition Settings (Sidebar)
 # ============================================================
-st.sidebar.header("Condition Settings / 条件設定")
+st.sidebar.header("Simulation Inputs / 入力")
 
-st.sidebar.subheader("Margins / マージン (mm)")
-m_vertical = st.sidebar.number_input(
-    "Vertical Margin / 垂直方向", value=10.0, min_value=0.0, max_value=50.0, step=0.5, key="m_z"
-)
-m_long = st.sidebar.number_input(
-    "Long Margin / 長軸方向", value=10.0, min_value=0.0, max_value=50.0, step=0.5, key="m_y"
-)
-m_lateral = st.sidebar.number_input(
-    "Lateral Margin / 側方", value=10.0, min_value=0.0, max_value=50.0, step=0.5, key="m_x"
-)
-margin = MarginProtocol(m_x=m_lateral, m_y=m_long, m_z=m_vertical)
+with st.sidebar.expander("1. Conditions / 条件", expanded=True):
+    st.subheader("Margins / マージン (mm)")
+    m_vertical = st.number_input(
+        "Vertical Margin / 垂直方向", value=10.0, min_value=0.0, max_value=50.0, step=0.5, key="m_z"
+    )
+    m_long = st.number_input(
+        "Long Margin / 長軸方向", value=10.0, min_value=0.0, max_value=50.0, step=0.5, key="m_y"
+    )
+    m_lateral = st.number_input(
+        "Lateral Margin / 側方", value=10.0, min_value=0.0, max_value=50.0, step=0.5, key="m_x"
+    )
+    margin = MarginProtocol(m_x=m_lateral, m_y=m_long, m_z=m_vertical)
 
-# Safety factor
-safety_z = st.sidebar.number_input(
-    "Safety Factor z / 安全係数", value=2.0, min_value=0.0, max_value=5.0, step=0.1, key="safety_z"
-)
+    safety_z = st.number_input(
+        "Safety Factor z / 安全係数", value=2.0, min_value=0.0, max_value=5.0, step=0.1, key="safety_z"
+    )
 
-# Uncertainty
-with st.sidebar.expander("Uncertainty Settings / 不確かさ設定"):
-    unc_axes = {}
-    for label, axis_key in [("Lateral (x)", "x"), ("Long (y)", "y"), ("Vertical (z)", "z")]:
-        st.markdown(f"**{label}**")
-        u_id = st.number_input(f"U_identify ({axis_key})", value=1.0, min_value=0.0, step=0.1, key=f"u_id_{axis_key}")
-        u_sur = st.number_input(f"U_surrogate ({axis_key})", value=2.0, min_value=0.0, step=0.1, key=f"u_sur_{axis_key}")
-        u_reg = st.number_input(f"U_registration ({axis_key})", value=1.0, min_value=0.0, step=0.1, key=f"u_reg_{axis_key}")
-        u_intra = st.number_input(f"U_intrafraction ({axis_key})", value=1.0, min_value=0.0, step=0.1, key=f"u_intra_{axis_key}")
-        u_mod = st.number_input(f"U_model ({axis_key})", value=0.5, min_value=0.0, step=0.1, key=f"u_mod_{axis_key}")
-        au = AxisUncertainty(u_identify=u_id, u_surrogate=u_sur, u_registration=u_reg, u_intrafraction=u_intra, u_model=u_mod)
-        st.caption(f"Total: {au.total:.2f} mm")
-        unc_axes[axis_key] = au
+    unc_template = st.selectbox(
+        "Uncertainty Template / 不確かさテンプレート",
+        ["default", "custom"],
+        index=0,
+        key="unc_template",
+    )
+    if unc_template == "default":
+        _apply_default_uncertainty_template()
+
+    with st.expander("Uncertainty Settings / 不確かさ設定", expanded=False):
+        st.caption("Use `custom` to edit values. `default` applies the baseline demo template.")
+        unc_axes = {}
+        inputs_disabled = unc_template != "custom"
+        for label, axis_key in [("Lateral (x)", "x"), ("Long (y)", "y"), ("Vertical (z)", "z")]:
+            st.markdown(f"**{label}**")
+            u_id = st.number_input(
+                f"U_identify ({axis_key})",
+                min_value=0.0,
+                step=0.1,
+                key=f"u_id_{axis_key}",
+                disabled=inputs_disabled,
+            )
+            u_sur = st.number_input(
+                f"U_surrogate ({axis_key})",
+                min_value=0.0,
+                step=0.1,
+                key=f"u_sur_{axis_key}",
+                disabled=inputs_disabled,
+            )
+            u_reg = st.number_input(
+                f"U_registration ({axis_key})",
+                min_value=0.0,
+                step=0.1,
+                key=f"u_reg_{axis_key}",
+                disabled=inputs_disabled,
+            )
+            u_intra = st.number_input(
+                f"U_intrafraction ({axis_key})",
+                min_value=0.0,
+                step=0.1,
+                key=f"u_intra_{axis_key}",
+                disabled=inputs_disabled,
+            )
+            u_mod = st.number_input(
+                f"U_model ({axis_key})",
+                min_value=0.0,
+                step=0.1,
+                key=f"u_mod_{axis_key}",
+                disabled=inputs_disabled,
+            )
+            au = AxisUncertainty(
+                u_identify=u_id,
+                u_surrogate=u_sur,
+                u_registration=u_reg,
+                u_intrafraction=u_intra,
+                u_model=u_mod,
+            )
+            st.caption(f"Total: {au.total:.2f} mm")
+            unc_axes[axis_key] = au
 
 uncertainty = UncertaintyModel(x=unc_axes["x"], y=unc_axes["y"], z=unc_axes["z"])
 
@@ -75,48 +170,49 @@ uncertainty = UncertaintyModel(x=unc_axes["x"], y=unc_axes["y"], z=unc_axes["z"]
 # ============================================================
 # Section 2: Evaluation Points (Sidebar)
 # ============================================================
-st.sidebar.header("Evaluation Points / 評価点設定")
-
-# Farthest point
-st.sidebar.subheader("Farthest Point / 最遠点")
-fp_name = st.sidebar.text_input("Name / 名前", value="farthest_1", key="fp_name")
-fp_x = st.sidebar.number_input("x (Lateral) mm", value=0.0, step=1.0, key="fp_x")
-fp_y = st.sidebar.number_input("y (Long) mm", value=100.0, step=1.0, key="fp_y")
-fp_z = st.sidebar.number_input("z (Vertical) mm", value=50.0, step=1.0, key="fp_z")
-farthest = EvaluationPoint(name=fp_name, x=fp_x, y=fp_y, z=fp_z)
-st.sidebar.caption(f"Distance from ISO: {farthest.distance_from_iso:.1f} mm")
-
-# Additional points
-st.sidebar.subheader("Additional Points / 追加評価点")
 if "extra_points" not in st.session_state:
     st.session_state.extra_points = []
 
-if st.sidebar.button("+ Add Point / 点を追加"):
-    idx = len(st.session_state.extra_points) + 2
-    st.session_state.extra_points.append(
-        {"name": f"point_{idx}", "x": 0.0, "y": 0.0, "z": 0.0}
+with st.sidebar.expander("2. Evaluation Points / 評価点", expanded=True):
+    st.subheader("Farthest Point / 最遠点")
+    fp_name = st.text_input("Name / 名前", value="farthest_1", key="fp_name")
+    fp_x = st.number_input("x (Lateral) mm", value=0.0, step=1.0, key="fp_x")
+    fp_y = st.number_input("y (Long) mm", value=100.0, step=1.0, key="fp_y")
+    fp_z = st.number_input("z (Vertical) mm", value=50.0, step=1.0, key="fp_z")
+    farthest = EvaluationPoint(name=fp_name, x=fp_x, y=fp_y, z=fp_z)
+    st.caption(f"Distance from ISO: {farthest.distance_from_iso:.1f} mm")
+
+    st.subheader("Additional Points / 追加評価点")
+    st.caption("Add, edit, or delete rows directly in the table.")
+    extra_points_df = pd.DataFrame(st.session_state.extra_points, columns=["name", "x", "y", "z"])
+    edited_extra_points = st.data_editor(
+        extra_points_df,
+        hide_index=True,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "name": st.column_config.TextColumn("Name"),
+            "x": st.column_config.NumberColumn("x (Lat)", step=1.0, format="%.1f"),
+            "y": st.column_config.NumberColumn("y (Long)", step=1.0, format="%.1f"),
+            "z": st.column_config.NumberColumn("z (Vert)", step=1.0, format="%.1f"),
+        },
     )
+    st.session_state.extra_points = _normalize_extra_points(edited_extra_points)
 
-remove_idx = None
-for i, ep_data in enumerate(st.session_state.extra_points):
-    with st.sidebar.container():
-        cols = st.sidebar.columns([3, 1])
-        with cols[0]:
-            st.markdown(f"**Point {i + 2}**")
-        with cols[1]:
-            if st.button("🗑", key=f"rm_{i}"):
-                remove_idx = i
-
-        ep_data["name"] = st.sidebar.text_input("Name", value=ep_data["name"], key=f"ep_name_{i}")
-        ep_data["x"] = st.sidebar.number_input("x mm", value=ep_data["x"], step=1.0, key=f"ep_x_{i}")
-        ep_data["y"] = st.sidebar.number_input("y mm", value=ep_data["y"], step=1.0, key=f"ep_y_{i}")
-        ep_data["z"] = st.sidebar.number_input("z mm", value=ep_data["z"], step=1.0, key=f"ep_z_{i}")
-        pt = EvaluationPoint(name=ep_data["name"], x=ep_data["x"], y=ep_data["y"], z=ep_data["z"])
-        st.sidebar.caption(f"Distance: {pt.distance_from_iso:.1f} mm")
-
-if remove_idx is not None:
-    st.session_state.extra_points.pop(remove_idx)
-    st.rerun()
+    if st.session_state.extra_points:
+        extra_preview_rows = []
+        for point_data in st.session_state.extra_points:
+            point = EvaluationPoint(
+                name=str(point_data["name"]),
+                x=float(point_data["x"]),
+                y=float(point_data["y"]),
+                z=float(point_data["z"]),
+            )
+            extra_preview_rows.append({
+                "Point": point.name,
+                "d_iso (mm)": f"{point.distance_from_iso:.1f}",
+            })
+        st.dataframe(pd.DataFrame(extra_preview_rows), hide_index=True, use_container_width=True)
 
 # Build evaluation points list
 eval_points: list[EvaluationPoint] = [farthest]
@@ -129,91 +225,97 @@ for ep_data in st.session_state.extra_points:
 # ============================================================
 # Section 3: 6DoF Simulation (Sidebar)
 # ============================================================
-st.sidebar.header("6DoF Simulation / シミュレーション")
+with st.sidebar.expander("3. Current 6DoF / 現在の6DoF", expanded=True):
+    vertical = st.slider("Vertical (mm)", -50.0, 50.0, 0.0, 0.1, key="sl_vert")
+    longitudinal = st.slider("Long (mm)", -50.0, 50.0, 0.0, 0.1, key="sl_long")
+    lateral = st.slider("Lateral (mm)", -50.0, 50.0, 0.0, 0.1, key="sl_lat")
+    rotation = st.slider("Rotation (°)", -10.0, 10.0, 0.0, 0.1, key="sl_rot")
+    pitch = st.slider("Pitch (°)", -10.0, 10.0, 0.0, 0.1, key="sl_pitch")
+    roll = st.slider("Roll (°)", -10.0, 10.0, 0.0, 0.1, key="sl_roll")
 
-vertical = st.sidebar.slider("Vertical (mm)", -50.0, 50.0, 0.0, 0.1, key="sl_vert")
-longitudinal = st.sidebar.slider("Long (mm)", -50.0, 50.0, 0.0, 0.1, key="sl_long")
-lateral = st.sidebar.slider("Lateral (mm)", -50.0, 50.0, 0.0, 0.1, key="sl_lat")
-rotation = st.sidebar.slider("Rotation (°)", -10.0, 10.0, 0.0, 0.1, key="sl_rot")
-pitch = st.sidebar.slider("Pitch (°)", -10.0, 10.0, 0.0, 0.1, key="sl_pitch")
-roll = st.sidebar.slider("Roll (°)", -10.0, 10.0, 0.0, 0.1, key="sl_roll")
+    current_state = SetupState(
+        vertical=vertical,
+        longitudinal=longitudinal,
+        lateral=lateral,
+        rotation=rotation,
+        pitch=pitch,
+        roll=roll,
+    )
 
-current_state = SetupState(
-    vertical=vertical,
-    longitudinal=longitudinal,
-    lateral=lateral,
-    rotation=rotation,
-    pitch=pitch,
-    roll=roll,
-)
+    st.caption(
+        f"Translation magnitude: {math.sqrt(lateral**2 + longitudinal**2 + vertical**2):.2f} mm"
+    )
 
-# Standalone reference mode
-st.sidebar.subheader("Standalone Reference / 単独許容量の基準状態")
-ref_mode = st.sidebar.selectbox(
-    "Mode / モード",
-    ["zero_based", "current_based", "custom"],
-    index=0,
-    key="ref_mode",
-)
+    st.subheader("Standalone Reference / 単独許容量の基準状態")
+    ref_mode = st.selectbox(
+        "Mode / モード",
+        ["zero_based", "current_based", "custom"],
+        index=0,
+        key="ref_mode",
+    )
 
-if ref_mode == "zero_based":
-    reference_state = SetupState.zero()
-elif ref_mode == "current_based":
-    reference_state = current_state
-else:
-    st.sidebar.markdown("**Custom Reference / カスタム基準値**")
-    ref_v = st.sidebar.number_input(
-        "Ref Vertical (mm)",
-        value=0.0,
-        min_value=TRANSLATION_SEARCH_MIN,
-        max_value=TRANSLATION_SEARCH_MAX,
-        step=0.1,
-        key="ref_v",
-    )
-    ref_l = st.sidebar.number_input(
-        "Ref Long (mm)",
-        value=0.0,
-        min_value=TRANSLATION_SEARCH_MIN,
-        max_value=TRANSLATION_SEARCH_MAX,
-        step=0.1,
-        key="ref_l",
-    )
-    ref_t = st.sidebar.number_input(
-        "Ref Lateral (mm)",
-        value=0.0,
-        min_value=TRANSLATION_SEARCH_MIN,
-        max_value=TRANSLATION_SEARCH_MAX,
-        step=0.1,
-        key="ref_t",
-    )
-    ref_r = st.sidebar.number_input(
-        "Ref Rotation (°)",
-        value=0.0,
-        min_value=ROTATION_SEARCH_MIN,
-        max_value=ROTATION_SEARCH_MAX,
-        step=0.1,
-        key="ref_r",
-    )
-    ref_p = st.sidebar.number_input(
-        "Ref Pitch (°)",
-        value=0.0,
-        min_value=ROTATION_SEARCH_MIN,
-        max_value=ROTATION_SEARCH_MAX,
-        step=0.1,
-        key="ref_p",
-    )
-    ref_w = st.sidebar.number_input(
-        "Ref Roll (°)",
-        value=0.0,
-        min_value=ROTATION_SEARCH_MIN,
-        max_value=ROTATION_SEARCH_MAX,
-        step=0.1,
-        key="ref_w",
-    )
-    reference_state = SetupState(
-        vertical=ref_v, longitudinal=ref_l, lateral=ref_t,
-        rotation=ref_r, pitch=ref_p, roll=ref_w,
-    )
+    if ref_mode == "zero_based":
+        reference_state = SetupState.zero()
+    elif ref_mode == "current_based":
+        reference_state = current_state
+    else:
+        st.markdown("**Custom Reference / カスタム基準値**")
+        ref_v = st.number_input(
+            "Ref Vertical (mm)",
+            value=0.0,
+            min_value=TRANSLATION_SEARCH_MIN,
+            max_value=TRANSLATION_SEARCH_MAX,
+            step=0.1,
+            key="ref_v",
+        )
+        ref_l = st.number_input(
+            "Ref Long (mm)",
+            value=0.0,
+            min_value=TRANSLATION_SEARCH_MIN,
+            max_value=TRANSLATION_SEARCH_MAX,
+            step=0.1,
+            key="ref_l",
+        )
+        ref_t = st.number_input(
+            "Ref Lateral (mm)",
+            value=0.0,
+            min_value=TRANSLATION_SEARCH_MIN,
+            max_value=TRANSLATION_SEARCH_MAX,
+            step=0.1,
+            key="ref_t",
+        )
+        ref_r = st.number_input(
+            "Ref Rotation (°)",
+            value=0.0,
+            min_value=ROTATION_SEARCH_MIN,
+            max_value=ROTATION_SEARCH_MAX,
+            step=0.1,
+            key="ref_r",
+        )
+        ref_p = st.number_input(
+            "Ref Pitch (°)",
+            value=0.0,
+            min_value=ROTATION_SEARCH_MIN,
+            max_value=ROTATION_SEARCH_MAX,
+            step=0.1,
+            key="ref_p",
+        )
+        ref_w = st.number_input(
+            "Ref Roll (°)",
+            value=0.0,
+            min_value=ROTATION_SEARCH_MIN,
+            max_value=ROTATION_SEARCH_MAX,
+            step=0.1,
+            key="ref_w",
+        )
+        reference_state = SetupState(
+            vertical=ref_v,
+            longitudinal=ref_l,
+            lateral=ref_t,
+            rotation=ref_r,
+            pitch=ref_p,
+            roll=ref_w,
+        )
 
 
 # ============================================================
@@ -224,6 +326,15 @@ overall = is_pass(results)
 worst_pt = find_worst_point(results)
 worst_ax = find_worst_axis(results) if results else ""
 mag = math.sqrt(lateral**2 + longitudinal**2 + vertical**2)
+constraint_idx = AXIS_INDEX[worst_ax] if results and worst_ax else 0
+axis_margins = (margin.m_x, margin.m_y, margin.m_z)
+constraint_label = AXIS_LABELS.get(worst_ax, "")
+constraint_margin = axis_margins[constraint_idx] if results else 0.0
+constraint_conservative = worst_pt.conservative_displacement_mm[constraint_idx] if worst_pt else 0.0
+constraint_remaining = worst_pt.margin_remaining_mm[constraint_idx] if worst_pt else 0.0
+constraint_overrun = max(0.0, -constraint_remaining)
+constraint_headroom = max(0.0, constraint_remaining)
+max_q = worst_pt.margin_consumption_ratio[constraint_idx] if worst_pt else 0.0
 
 conditional = find_all_conditional_allowances(current_state, eval_points, margin, uncertainty, safety_z)
 standalone = find_all_standalone_allowances(reference_state, eval_points, margin, uncertainty, safety_z)
@@ -247,11 +358,26 @@ sim_result = SimulationResult(
 if not eval_points:
     st.warning("⚠️ Please add evaluation points. / 評価点を入力してください。")
 elif overall is True:
-    st.success(f"✅ **PASS** — Worst Point: {worst_pt.point_name}, Constraint Axis: {worst_ax}, "
-               f"Max Q: {max(worst_pt.margin_consumption_ratio):.3f}, Mag: {mag:.1f} mm")
+    st.success(
+        f"✅ **PASS** — Worst point `{worst_pt.point_name}` is limited by `{constraint_label}` "
+        f"with {constraint_headroom:.2f} mm headroom remaining."
+    )
 else:
-    st.error(f"❌ **FAIL** — Worst Point: {worst_pt.point_name}, Constraint Axis: {worst_ax}, "
-             f"Max Q: {max(worst_pt.margin_consumption_ratio):.3f}, Mag: {mag:.1f} mm")
+    st.error(
+        f"❌ **FAIL** — Point `{worst_pt.point_name}` exceeds `{constraint_label}` by "
+        f"{constraint_overrun:.2f} mm. Conservative displacement is "
+        f"{constraint_conservative:.2f} mm against a {constraint_margin:.2f} mm margin."
+    )
+
+if results and worst_pt:
+    summary_cols = st.columns(4)
+    summary_cols[0].metric("Worst Point", worst_pt.point_name)
+    summary_cols[1].metric("Constraint Axis", constraint_label)
+    summary_cols[2].metric("Max Q", f"{max_q:.3f}")
+    summary_cols[3].metric(
+        "Headroom" if overall else "Excess",
+        f"{constraint_headroom:.2f} mm" if overall else f"{constraint_overrun:.2f} mm",
+    )
 
 # --- 4.2 Point results table ---
 if results:
@@ -278,7 +404,7 @@ if results:
     st.subheader("Allowable Ranges / 許容量")
     col1, col2 = st.columns(2)
 
-    def _allowance_df(allowances: list, title: str) -> pd.DataFrame:
+    def _allowance_df(allowances: list) -> pd.DataFrame:
         rows = []
         for a in allowances:
             unit = "°" if a.axis_name in ("rotation", "pitch", "roll") else "mm"
@@ -297,45 +423,45 @@ if results:
 
     with col1:
         st.markdown("**Conditional / 条件付き許容量**")
-        st.dataframe(_allowance_df(conditional, "Conditional"), use_container_width=True, hide_index=True)
+        st.caption("Other 5 axes stay fixed at the current 6DoF values.")
+        st.dataframe(_allowance_df(conditional), use_container_width=True, hide_index=True)
 
     with col2:
         st.markdown(f"**Standalone / 単独許容量 ({ref_mode})**")
-        st.dataframe(_allowance_df(standalone, "Standalone"), use_container_width=True, hide_index=True)
+        st.caption("Only the selected axis changes from the chosen reference state.")
+        st.dataframe(_allowance_df(standalone), use_container_width=True, hide_index=True)
 
-# --- 4.4 Reference indicators ---
-if results and worst_pt:
-    st.subheader("Reference Indicators / 参考指標 (3D)")
-    ref_cols = st.columns(3)
-    ref_cols[0].metric("Effective Displacement (3D)", f"{worst_pt.effective_displacement_3d_mm:.2f} mm")
-    ref_cols[1].metric("Max Consumption Q", f"{max(worst_pt.margin_consumption_ratio):.3f}")
-    ref_cols[2].metric("Mag (translation norm)", f"{mag:.2f} mm")
-
-# --- 4.5 Scatter plot: distance vs max Q ---
+# --- 4.4 Detailed diagnostics ---
 if results:
-    st.subheader("Distance vs Margin Consumption / 距離 vs マージン消費率")
-    scatter_data = pd.DataFrame({
-        "Point": [pr.point_name for pr in results],
-        "Distance from ISO (mm)": [pr.distance_from_iso_mm for pr in results],
-        "Max Q": [max(pr.margin_consumption_ratio) for pr in results],
-    })
-    chart = st.scatter_chart(
-        scatter_data,
-        x="Distance from ISO (mm)",
-        y="Max Q",
-        color=None,
-        use_container_width=True,
-    )
+    with st.expander("Detailed Diagnostics / 詳細診断", expanded=False):
+        if worst_pt:
+            st.subheader("Reference Indicators / 参考指標 (3D)")
+            ref_cols = st.columns(3)
+            ref_cols[0].metric("Effective Displacement (3D)", f"{worst_pt.effective_displacement_3d_mm:.2f} mm")
+            ref_cols[1].metric("Max Consumption Q", f"{max_q:.3f}")
+            ref_cols[2].metric("Mag (translation norm)", f"{mag:.2f} mm")
 
-# --- 4.6 Contribution breakdown ---
-if results:
-    st.subheader("Contribution Breakdown / 寄与分離")
-    contrib_rows = []
-    for pr in results:
-        contrib_rows.append({
-            "Point": pr.point_name,
-            "Translation (mm)": pr.translation_only_mm,
-            "Rotation (mm)": pr.rotation_induced_mm,
+        st.subheader("Distance vs Margin Consumption / 距離 vs マージン消費率")
+        scatter_data = pd.DataFrame({
+            "Point": [pr.point_name for pr in results],
+            "Distance from ISO (mm)": [pr.distance_from_iso_mm for pr in results],
+            "Max Q": [max(pr.margin_consumption_ratio) for pr in results],
         })
-    df_contrib = pd.DataFrame(contrib_rows)
-    st.bar_chart(df_contrib.set_index("Point"), use_container_width=True)
+        st.scatter_chart(
+            scatter_data,
+            x="Distance from ISO (mm)",
+            y="Max Q",
+            color=None,
+            use_container_width=True,
+        )
+
+        st.subheader("Contribution Breakdown / 寄与分離")
+        contrib_rows = []
+        for pr in results:
+            contrib_rows.append({
+                "Point": pr.point_name,
+                "Translation (mm)": pr.translation_only_mm,
+                "Rotation (mm)": pr.rotation_induced_mm,
+            })
+        df_contrib = pd.DataFrame(contrib_rows)
+        st.bar_chart(df_contrib.set_index("Point"), use_container_width=True)
