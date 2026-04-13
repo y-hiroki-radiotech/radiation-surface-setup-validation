@@ -81,6 +81,35 @@ st.set_page_config(page_title="Setup Margin Simulator", layout="wide")
 st.title("Setup Margin Allowance Simulator / セットアップマージン許容領域シミュレータ")
 st.caption("Adjust the current 6DoF state, then review the limiting point and remaining margin headroom.")
 
+with st.expander("このアプリの使い方 / How to use", expanded=False):
+    st.markdown("""
+    ### 概要
+    表面誘導放射線治療（SGRT）における 6DoF セットアップ補正値が、
+    各軸のマージン内に収まるかどうかをリアルタイムで検証するシミュレータです。
+
+    ### 基本的な操作の流れ
+    1. **左サイドバー「1. Conditions」** でマージン（mm）・安全係数・不確かさを設定する
+    2. **左サイドバー「2. Evaluation Points」** で評価したい点のISOからの座標（mm）を入力する
+    3. **左サイドバー「3. Current 6DoF」** のスライダーで実際のセットアップ補正値を入力する
+    4. **メインエリア**に判定結果・許容量テーブルがリアルタイムで更新される
+
+    ### 座標軸の定義
+    | 軸 | 方向 | 単位 |
+    |---|---|---|
+    | x（Lateral） | 左右方向 | mm |
+    | y（Long） | 頭尾方向 | mm |
+    | z（Vertical） | 上下方向 | mm |
+    | Rotation | 水平回転（Yaw） | ° |
+    | Pitch | 前後傾き | ° |
+    | Roll | 左右傾き | ° |
+
+    ### 判定ロジック
+    各評価点について、6DoF 補正による変位の保守的推定値（実変位 + 不確かさ×安全係数）が
+    マージンを超えていないかを軸ごとに検証します。
+    消費率 **Q = 保守的変位 ÷ マージン** が全軸で 1.0 未満であれば **PASS** です。
+    """)
+
+
 
 # ============================================================
 # Section 1: Condition Settings (Sidebar)
@@ -88,6 +117,29 @@ st.caption("Adjust the current 6DoF state, then review the limiting point and re
 st.sidebar.header("Simulation Inputs / 入力")
 
 with st.sidebar.expander("1. Conditions / 条件", expanded=True):
+    with st.expander("ヘルプ / Help", expanded=False):
+        st.markdown("""
+        **Margins（マージン）**
+        各軸に設定する計画マージン（mm）。セットアップ補正値の保守的推定値がこの値を
+        超えた場合に FAIL となります。
+
+        **Safety Factor z（安全係数）**
+        不確かさに掛けるシグマ倍率。`2.0` で 95%、`3.0` で 99.7% の信頼区間に相当します。
+        通常は 2.0 を使用します。
+
+        **Uncertainty Template（不確かさテンプレート）**
+        - `default`: デモ用の既定値（各軸で同一）
+        - `custom`: 軸ごとに不確かさを個別入力
+
+        **不確かさの各成分（mm）**
+        | 項目 | 内容 |
+        |---|---|
+        | U_identify | 患者識別誤差 |
+        | U_surrogate | サロゲート信号誤差 |
+        | U_registration | レジストレーション誤差 |
+        | U_intrafraction | 治療中の動き |
+        | U_model | モデル誤差 |
+        """)
     st.subheader("Margins / マージン (mm)")
     m_vertical = st.number_input(
         "Vertical Margin / 垂直方向", value=10.0, min_value=0.0, max_value=50.0, step=0.5, key="m_z"
@@ -174,6 +226,23 @@ if "extra_points" not in st.session_state:
     st.session_state.extra_points = []
 
 with st.sidebar.expander("2. Evaluation Points / 評価点", expanded=True):
+    with st.expander("ヘルプ / Help", expanded=False):
+        st.markdown("""
+        **評価点とは**
+        ISO中心（原点 0,0,0）からの距離が大きいほど、回転補正による変位が大きくなります。
+        実際の治療計画で問題になりそうな点（ターゲット端部・OARなど）の座標を入力します。
+
+        **Farthest Point（最遠点）**
+        必須入力。ISO から最も遠い点を想定した評価点です。
+        座標は CT 画像上の ISO を原点とした mm 単位で入力します。
+
+        **Additional Points（追加評価点）**
+        任意で複数点を追加できます。表の行をクリックして編集し、
+        行末の `+` ボタンで新しい行を追加します。不要な行は行を選択して Delete キーで削除できます。
+
+        **d_iso（ISO距離）**
+        入力した座標の ISO からの直線距離（mm）。回転による変位量はこの距離に比例します。
+        """)
     st.subheader("Farthest Point / 最遠点")
     fp_name = st.text_input("Name / 名前", value="farthest_1", key="fp_name")
     fp_x = st.number_input("x (Lateral) mm", value=0.0, step=1.0, key="fp_x")
@@ -226,12 +295,36 @@ for ep_data in st.session_state.extra_points:
 # Section 3: 6DoF Simulation (Sidebar)
 # ============================================================
 with st.sidebar.expander("3. Current 6DoF / 現在の6DoF", expanded=True):
-    vertical = st.slider("Vertical (mm)", -50.0, 50.0, 0.0, 0.1, key="sl_vert")
-    longitudinal = st.slider("Long (mm)", -50.0, 50.0, 0.0, 0.1, key="sl_long")
-    lateral = st.slider("Lateral (mm)", -50.0, 50.0, 0.0, 0.1, key="sl_lat")
-    rotation = st.slider("Rotation (°)", -10.0, 10.0, 0.0, 0.1, key="sl_rot")
-    pitch = st.slider("Pitch (°)", -10.0, 10.0, 0.0, 0.1, key="sl_pitch")
-    roll = st.slider("Roll (°)", -10.0, 10.0, 0.0, 0.1, key="sl_roll")
+    with st.expander("ヘルプ / Help", expanded=False):
+        st.markdown("""
+        **スライダーの入力値**
+        SGRT システムが出力した実際のセットアップ補正値を入力します。
+
+        | 項目 | 方向 | 範囲 |
+        |---|---|---|
+        | Vertical | 上下 | ±3.0 cm |
+        | Long | 頭尾 | ±3.0 cm |
+        | Lateral | 左右 | ±3.0 cm |
+        | Rotation | 水平回転（Yaw） | ±5.0° |
+        | Pitch | 前後傾き | ±5.0° |
+        | Roll | 左右傾き | ±5.0° |
+
+        **Standalone Reference（単独許容量の基準状態）**
+        「1軸だけを動かした場合の許容量」を計算する際の出発点です。
+        - `zero_based`: 全軸ゼロから各軸を単独に変化させる
+        - `current_based`: 現在の6DoF値を基準に各軸を単独に変化させる
+        - `custom`: 基準値を手動で指定する
+        """)
+    vertical_cm = st.slider("Vertical (cm)", -3.0, 3.0, 0.0, 0.1, format="%.1f", key="sl_vert")
+    longitudinal_cm = st.slider("Long (cm)", -3.0, 3.0, 0.0, 0.1, format="%.1f", key="sl_long")
+    lateral_cm = st.slider("Lateral (cm)", -3.0, 3.0, 0.0, 0.1, format="%.1f", key="sl_lat")
+    rotation = st.slider("Rotation (°)", -5.0, 5.0, 0.0, 0.1, key="sl_rot")
+    pitch = st.slider("Pitch (°)", -5.0, 5.0, 0.0, 0.1, key="sl_pitch")
+    roll = st.slider("Roll (°)", -5.0, 5.0, 0.0, 0.1, key="sl_roll")
+
+    vertical = vertical_cm * 10
+    longitudinal = longitudinal_cm * 10
+    lateral = lateral_cm * 10
 
     current_state = SetupState(
         vertical=vertical,
@@ -243,7 +336,7 @@ with st.sidebar.expander("3. Current 6DoF / 現在の6DoF", expanded=True):
     )
 
     st.caption(
-        f"Translation magnitude: {math.sqrt(lateral**2 + longitudinal**2 + vertical**2):.2f} mm"
+        f"Translation magnitude: {math.sqrt(lateral_cm**2 + longitudinal_cm**2 + vertical_cm**2):.1f} cm"
     )
 
     st.subheader("Standalone Reference / 単独許容量の基準状態")
@@ -382,6 +475,16 @@ if results and worst_pt:
 # --- 4.2 Point results table ---
 if results:
     st.subheader("Point Results / 評価点別結果")
+    with st.expander("この表の見方 / How to read this table", expanded=False):
+        st.markdown("""
+        | 列名 | 内容 |
+        |---|---|
+        | d_iso (mm) | ISO中心からの直線距離 |
+        | Δx/Δy/Δz | 6DoF補正による各軸の実変位量（mm） |
+        | C_x/C_y/C_z | 保守的変位量 = 実変位 + 不確かさ×安全係数（mm） |
+        | Q_x/Q_y/Q_z | マージン消費率 = 保守的変位 ÷ マージン。**1.0 を超えると FAIL** |
+        | Status | ✅ = 全軸で Q < 1.0 / ❌ = いずれかの軸で Q ≥ 1.0 |
+        """)
     axis_labels = ["x (Lat)", "y (Long)", "z (Vert)"]
     rows = []
     for pr in results:
@@ -402,6 +505,25 @@ if results:
 # --- 4.3 Allowance tables ---
 if results:
     st.subheader("Allowable Ranges / 許容量")
+    with st.expander("この表の見方 / How to read this table", expanded=False):
+        st.markdown("""
+        各軸について「あとどれだけ動かせるか」を示します。
+
+        | 列名 | 内容 |
+        |---|---|
+        | Current | 現在の補正値 |
+        | Min / Max | その軸で PASS のままでいられる最小・最大値 |
+        | Rem(-) | 現在値からマイナス方向にあと何 mm/° 動かせるか |
+        | Rem(+) | 現在値からプラス方向にあと何 mm/° 動かせるか |
+        | Limit Pt | その軸の限界を決めている評価点名 |
+        | Limit Ax | 限界を決めているマージン軸 |
+        | Status | OK / WARN（余裕が少ない）/ NG |
+
+        **Conditional（条件付き許容量）**: 他の5軸を現在値に固定したまま、その1軸だけを動かした場合の許容範囲。
+
+        **Standalone（単独許容量）**: 他の全軸をゼロ（または指定の基準値）に固定した理論的上限。
+        実際の運用では Conditional を主に参照してください。
+        """)
     col1, col2 = st.columns(2)
 
     def _allowance_df(allowances: list) -> pd.DataFrame:
